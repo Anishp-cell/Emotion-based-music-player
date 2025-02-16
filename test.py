@@ -1,14 +1,39 @@
 import cv2
 import numpy as np
-from tensorflow.keras.models import load_model
+import tensorflow as tf
 
-# Load the trained model
-model = load_model('emotion_recognition_model_vgg16.h5') #add the file name in single quotes which is created after training the model
+# Load trained model
+model = tf.keras.models.load_model("emotion_model_v3.keras")
 
-# Emotion labels
-emotion_labels = ['happy', 'sad', 'angry', 'surprised', 'fatigue', 'neutral']
+# Updated emotion labels (based on the modified dataset)
+emotion_labels = ["Angry", "Happy", "Neutral", "Sad", "Surprised"]
 
-# Initialize the webcam
+# Load OpenCV Haar Cascade for face detection
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+
+def apply_clahe(image):
+    """Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)."""
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    return clahe.apply(image)
+
+def preprocess_image(image):
+    """Preprocess image: face detection, resizing, CLAHE, and normalization."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(30, 30))
+
+    if len(faces) == 0:
+        return None, None  # No face detected
+
+    x, y, w, h = faces[0]  # Use the first detected face
+    face = gray[y:y+h, x:x+w]  # Crop face
+    face = cv2.resize(face, (48, 48))  # Resize to model input size
+    face = apply_clahe(face)  # Apply CLAHE
+    face = (face - np.mean(face)) / np.std(face)  # Normalize (Mean-Std)
+    face = np.expand_dims(face, axis=0).reshape(-1, 48, 48, 1)  # Reshape for model
+
+    return face, (x, y, w, h)
+
+# Open webcam
 cap = cv2.VideoCapture(0)
 
 while True:
@@ -16,28 +41,22 @@ while True:
     if not ret:
         break
 
-    # Detect face using OpenCV's Haar cascades or any face detection method
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray_frame, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+    processed_face, face_coords = preprocess_image(frame)
 
-    for (x, y, w, h) in faces:
-        face = frame[y:y+h, x:x+w]  # Crop the face from the frame
-        face = cv2.resize(face, (224, 224))  # Resize to match model input size
-        face = face / 255.0  # Normalize pixel values to [0, 1]
-        face = np.expand_dims(face, axis=0)  # Add batch dimension
-
-        # Make prediction
-        predictions = model.predict(face)
+    if processed_face is not None:
+        # Predict emotion
+        predictions = model.predict(processed_face)
         emotion = emotion_labels[np.argmax(predictions)]
 
-        # Display emotion on the video
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        # Draw rectangle and label
+        x, y, w, h = face_coords
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
         cv2.putText(frame, emotion, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-    cv2.imshow('Emotion Detection', frame)
+    # Show output
+    cv2.imshow("Emotion Detection", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:
+    if cv2.waitKey(1) & 0xFF == ord("q"):  # Press 'q' to exit
         break
 
 cap.release()
